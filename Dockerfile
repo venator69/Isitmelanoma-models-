@@ -1,21 +1,28 @@
-# GPU image for YOLO26 (Ultralytics) + DETR (Hugging Face Transformers).
+# PyTorch image for YOLO26 (Ultralytics) + DETR (Hugging Face Transformers).
+# GPU is optional: use default CUDA base for NVIDIA hosts, or a CPU-only base (see below).
 #
 # Prerequisites (host):
-#   - NVIDIA driver
-#   - Docker with NVIDIA Container Toolkit (Linux / WSL2 with GPU)
+#   - Docker
+#   - Optional: NVIDIA driver + NVIDIA Container Toolkit for `docker run --gpus all`
 #
-# Build:
+# Build (CUDA, default):
 #   docker build -t yolo26-detr:cuda .
 #
-# Run (GPU):
+# Build (CPU-only, smaller image — no NVIDIA required):
+#   docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.5.1-runtime -t yolo26-detr:cpu .
+#
+# Run (CPU — no --gpus):
+#   docker run --rm yolo26-detr:cuda
+#
+# Run (GPU when available):
 #   docker run --rm --gpus all yolo26-detr:cuda
 #
 # Run with your weights + image:
-#   docker run --rm --gpus all -v C:\path\to\data:/data yolo26-detr:cuda \
+#   docker run --rm -v C:\path\to\data:/data yolo26-detr:cuda \
 #     python3 example_infer.py --image /data/img.jpg --yolo-weights /data/best.pt
 #
 # Train (YOLO-format images + labels; see README + dataset.example.yaml):
-#   docker run --rm --gpus all -v C:\path\to\dataset:/dataset yolo26-detr:cuda \
+#   docker run --rm -v C:\path\to\dataset:/dataset yolo26-detr:cuda \
 #     python3 train.py --model yolo26n --data /dataset/data.yaml --epochs 100 --batch 16
 #   # --model: yolo26n | yolo26s | yolo26m | rtdetr | rtdetr-l | rtdetr-x
 #
@@ -26,22 +33,20 @@
 ARG PYTORCH_IMAGE=pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 FROM ${PYTORCH_IMAGE}
 
-ENV PYTHONUNBUFFERED=1 \
-    NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Base image already includes CUDA-enabled torch/torchvision.
+# Base image includes torch/torchvision (CUDA or CPU depending on PYTORCH_IMAGE).
 COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY . /app
 
-# Cache yolo26n/s/m + RT-DETR-L weights in the image (requires network at build time).
+# Cache yolo26n/s/m + RT-DETR weights in the image (requires network at build time).
 # Skip with: docker build --build-arg SKIP_PREFETCH=1 -t yolo26-detr:cuda .
 ARG SKIP_PREFETCH=0
 RUN if [ "$SKIP_PREFETCH" != "1" ]; then python3 /app/prefetch_weights.py; fi
 
-CMD ["python3", "-c", "import torch; print('cuda:', torch.cuda.is_available(), torch.version.cuda); import ultralytics; from transformers import AutoModel; print('ok')"]
+CMD ["python3", "-c", "import torch; print('cuda:', torch.cuda.is_available(), getattr(torch.version, 'cuda', None)); import ultralytics; from transformers import AutoModel; print('ok')"]

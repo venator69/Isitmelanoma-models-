@@ -1,8 +1,8 @@
 """
-Example: YOLO26 (Ultralytics) + DETR (Transformers) on CUDA inside the container.
+Example: YOLO26 (Ultralytics) + DETR (Transformers). Uses CUDA if available, else CPU.
 
 Mount weights at runtime, e.g.:
-  docker run --rm --gpus all -v /path/to/weights:/weights yolo26-detr:cuda \\
+  docker run --rm -v /path/to/weights:/weights yolo26-detr:cuda \\
     python3 example_infer.py --image /weights/sample.jpg
 """
 from __future__ import annotations

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import torch
 from ultralytics import YOLO
 
 # Preset -> Ultralytics hub / local weight filename (downloaded on first use).
@@ -55,8 +56,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch", type=int, default=16)
     p.add_argument(
         "--device",
-        default="0",
-        help="GPU index (e.g. 0) or cpu.",
+        default="auto",
+        metavar="DEVICE",
+        help="auto (GPU 0 if CUDA available, else cpu), a GPU index (e.g. 0), or cpu.",
     )
     p.add_argument("--project", type=str, default="runs/train")
     p.add_argument("--name", type=str, default="", help="Run name under --project (default: auto).")
@@ -79,13 +81,18 @@ def main() -> None:
     weights = args.weights.strip() or MODEL_PRESETS[args.model]
     print("weights:", weights, "| data:", data_path)
 
+    dev = args.device
+    if dev == "auto":
+        dev = "0" if torch.cuda.is_available() else "cpu"
+    print("device:", dev, "| cuda_available:", torch.cuda.is_available())
+
     model = YOLO(weights)
     train_kw: dict = {
         "data": str(data_path),
         "epochs": args.epochs,
         "imgsz": args.imgsz,
         "batch": args.batch,
-        "device": args.device,
+        "device": dev,
         "project": args.project,
         "patience": args.patience,
         "resume": args.resume,

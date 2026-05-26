@@ -1,17 +1,15 @@
-# YOLO26 + DETR (CUDA) Docker
+# YOLO26 + DETR (Docker)
 
-This project builds a GPU-enabled Docker image with **PyTorch (CUDA)**, **Ultralytics** (YOLO26 and related models), and **Hugging Face Transformers** (DETR and other object-detection checkpoints).
+This project builds a Docker image with **PyTorch**, **Ultralytics** (YOLO26 and related models), and **Hugging Face Transformers** (DETR and other object-detection checkpoints). **A GPU is optional:** the same image runs on **CPU** (slower); use **`--gpus all`** when you have an NVIDIA GPU and want CUDA.
 
 ## Prerequisites
 
-Before you build or run, your **host** must have:
+1. **Docker** installed.
+2. **Optional — NVIDIA GPU:** install the **NVIDIA driver** and (on Linux / WSL2 GPU) the **[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)** so `docker run --gpus all` exposes the GPU. You can skip this for CPU-only use.
 
-1. **NVIDIA GPU driver** installed (check with `nvidia-smi`).
-2. **Docker** with GPU support:
-   - **Linux**: Install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) so `docker run --gpus all` works.
-   - **Windows**: Use **Docker Desktop** with the **WSL2** backend and a WSL2 distro that supports your GPU, or run Docker on a Linux machine with the toolkit.
+If you use a **CUDA** base image on a machine **without** a GPU, PyTorch will report `cuda: False` and training/inference will use **CPU** (no `--gpus` flag needed).
 
-If `docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi` fails, fix GPU passthrough before building this image.
+For a **smaller CPU-only image** (no CUDA toolkit in the base), build with `PYTORCH_IMAGE=pytorch/pytorch:2.5.1-runtime` (see **Build** below).
 
 ## Clone or open the project
 
@@ -33,6 +31,20 @@ docker build -t yolo26-detr:cuda .
 - **`.`** is the build context (this folder).
 
 First build may take several minutes while dependencies download.
+
+### CPU-only image (optional)
+
+No NVIDIA hardware or drivers required:
+
+```powershell
+docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.5.1-runtime -t yolo26-detr:cpu .
+```
+
+Run without `--gpus`:
+
+```powershell
+docker run --rm yolo26-detr:cpu
+```
 
 ## Skin-cancer dataset (Kaggle)
 
@@ -79,21 +91,29 @@ Alternative to mounting the file: pass **`KAGGLE_USERNAME`** and **`KAGGLE_KEY`*
 
 ### Optional: use a different PyTorch base image
 
-The default base is `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime`. To override it (for example to match another CUDA minor on your driver):
+The default base is `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime` (CUDA-capable; still runs on CPU if no GPU is passed). To override it (for example to match another CUDA minor on your driver):
 
 ```powershell
 docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime -t yolo26-detr:cuda .
 ```
 
-Choose a tag whose CUDA version is **supported by your NVIDIA driver** (your driver’s `nvidia-smi` output lists a maximum CUDA version).
+Choose a CUDA tag whose CUDA version is **supported by your NVIDIA driver** when you plan to use `--gpus all` (your driver’s `nvidia-smi` output lists a maximum CUDA version).
 
-## Run the container (GPU smoke test)
+## Run the container (smoke test)
+
+**CPU (no GPU flags):**
+
+```powershell
+docker run --rm yolo26-detr:cuda
+```
+
+**GPU (when NVIDIA + toolkit are available):**
 
 ```powershell
 docker run --rm --gpus all yolo26-detr:cuda
 ```
 
-The default command prints whether **CUDA** is visible and imports **Ultralytics** and **Transformers**. You should see `cuda: True` and `ok` when the GPU is passed through correctly.
+The default command prints whether **CUDA** is available (`True`/`False`) and imports **Ultralytics** and **Transformers**. You should see `ok` in both cases; `cuda: True` only when the GPU is passed through to the container.
 
 ### Build without prefetching weights (offline / air-gapped builds)
 
@@ -138,22 +158,24 @@ Your YAML should set `path`, `train`, `val`, `nc`, and `names` so Ultralytics ca
 Mount the folder that contains `data.yaml` and the `images` / `labels` trees at `/dataset`:
 
 ```powershell
-docker run --rm --gpus all -v "C:\path\to\your\dataset:/dataset" yolo26-detr:cuda python3 train.py --model yolo26n --data /dataset/data.yaml --epochs 100 --imgsz 640 --batch 16 --device 0 --project /dataset/runs --name exp1
+docker run --rm -v "C:\path\to\your\dataset:/dataset" yolo26-detr:cuda python3 train.py --model yolo26n --data /dataset/data.yaml --epochs 100 --imgsz 640 --batch 16 --project /dataset/runs --name exp1
 ```
+
+Add **`--gpus all`** when you want GPU acceleration. **`train.py` defaults to `--device auto`** (uses GPU `0` if CUDA is available, otherwise `cpu`). Pass **`--device cpu`** or **`--device 0`** to force.
 
 RT-DETR-L (default alias `rtdetr`):
 
 ```powershell
-docker run --rm --gpus all -v "C:\path\to\your\dataset:/dataset" yolo26-detr:cuda python3 train.py --model rtdetr --data /dataset/data.yaml --epochs 100 --batch 8 --device 0
+docker run --rm -v "C:\path\to\your\dataset:/dataset" yolo26-detr:cuda python3 train.py --model rtdetr --data /dataset/data.yaml --epochs 100 --batch 8
 ```
 
-RT-DETR-X (larger; reduce `--batch` if you run out of VRAM):
+RT-DETR-X (larger; reduce `--batch` if you run out of VRAM on GPU):
 
 ```powershell
-docker run --rm --gpus all -v "C:\path\to\your\dataset:/dataset" yolo26-detr:cuda python3 train.py --model rtdetr-x --data /dataset/data.yaml --epochs 100 --batch 4 --device 0
+docker run --rm --gpus all -v "C:\path\to\your\dataset:/dataset" yolo26-detr:cuda python3 train.py --model rtdetr-x --data /dataset/data.yaml --epochs 100 --batch 4
 ```
 
-Use a smaller **`--batch`** if you hit GPU out-of-memory (especially for `yolo26m` or `rtdetr-x`).
+Use a smaller **`--batch`** if you hit out-of-memory (especially for `yolo26m` or `rtdetr-x` on GPU).
 
 ## Run example inference (YOLO + DETR)
 
@@ -162,8 +184,10 @@ Mount a folder on your PC that contains an image and (optionally) your YOLO weig
 **Windows (PowerShell), example:**
 
 ```powershell
-docker run --rm --gpus all -v "C:\path\to\your\data:/data" yolo26-detr:cuda python3 example_infer.py --image /data/photo.jpg --yolo-weights /data/best.pt --detr-model facebook/detr-resnet-50
+docker run --rm -v "C:\path\to\your\data:/data" yolo26-detr:cuda python3 example_infer.py --image /data/photo.jpg --yolo-weights /data/best.pt --detr-model facebook/detr-resnet-50
 ```
+
+Add **`--gpus all`** to use the GPU when available.
 
 - **`--image`**: path **inside the container** (under `/data` if you mounted `C:\path\to\your\data` to `/data`).
 - **`--yolo-weights`**: your `.pt` checkpoint or an Ultralytics-compatible weight name.
@@ -174,16 +198,16 @@ docker run --rm --gpus all -v "C:\path\to\your\data:/data" yolo26-detr:cuda pyth
 | Goal | Command |
 |------|---------|
 | List images | `docker images` |
-| Open a shell in the image | `docker run --rm -it --gpus all yolo26-detr:cuda bash` |
+| Open a shell in the image | `docker run --rm -it yolo26-detr:cuda bash` (add `--gpus all` for GPU) |
 | Rebuild after code changes | `docker build -t yolo26-detr:cuda .` |
 
 ## Troubleshooting
 
 - **`could not select device driver "" with capabilities: [[gpu]]`**  
-  Install and configure the **NVIDIA Container Toolkit** (Linux) or enable GPU in **Docker Desktop** / WSL2 (Windows).
+  You used **`--gpus all`** but this host has no NVIDIA Container Toolkit / no GPU. Omit **`--gpus all`** for CPU, or install the toolkit and use an NVIDIA-capable environment.
 
 - **`cuda: False` inside the container**  
-  You ran without `--gpus all`, or the host cannot see the GPU. Confirm `nvidia-smi` on the host, then retry with `--gpus all`.
+  Normal when running **without** `--gpus all`, on a **CPU-only** image, or on a host without a visible GPU. Training and inference still work on **CPU** (slower). To use CUDA, run with **`--gpus all`** and a CUDA-capable base image on a machine with a supported GPU.
 
 - **Build fails pulling `pytorch/pytorch`**  
   Check network and Docker Hub rate limits; retry later or use a mirror if your organization provides one.
@@ -192,7 +216,7 @@ docker run --rm --gpus all -v "C:\path\to\your\data:/data" yolo26-detr:cuda pyth
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | CUDA PyTorch base, installs deps, optionally prefetches YOLO26/RT-DETR weights. |
+| `Dockerfile` | PyTorch base (CUDA default or CPU via build-arg), deps, optional weight prefetch. |
 | `requirements.txt` | Python packages (Ultralytics, Transformers, OpenCV headless, etc.). |
 | `.dockerignore` | Reduces build context size (excludes venvs, large weights if present locally). |
 | `prefetch_weights.py` | Build-time download of default checkpoints into the image cache. |
