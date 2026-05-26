@@ -1,0 +1,18 @@
+# Example Ultralytics dataset config.
+# Copy to your dataset root (e.g. /dataset/data.yaml inside the container) and edit paths + classes.
+#
+# Folder layout next to this file:
+#   images/train/*.jpg
+#   images/val/*.jpg
+#   labels/train/*.txt   # one file per image, same basename as the image
+#   labels/val/*.txt
+
+path: . # directory that contains images/ and labels/ (or set to an absolute path like /dataset)
+train: images/train
+val: images/val
+
+# number of classes and names (must match your label indices 0..nc-1)
+nc: 2
+names:
+  0: melanoma
+  1: benign

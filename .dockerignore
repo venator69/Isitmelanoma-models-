@@ -1,0 +1,15 @@
+.git
+# Keep .gitignore in the image for reference; do not ignore it here.
+**/__pycache__
+**/*.pyc
+.venv
+venv
+*.pt
+*.pth
+*.onnx
+*.engine
+runs
+.cursor
+
+# Do not send local dataset blobs to the Docker build context; download in-container via Kaggle.
+Datasets/
