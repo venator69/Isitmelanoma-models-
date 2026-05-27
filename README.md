@@ -44,6 +44,51 @@ docker run --rm --shm-size=2g --gpus all -v "$(Get-Location)\Datasets\PAD-UFES-2
 
 **Models:** `yolo26n` | `yolo26s` | `yolo26m` | `rtdetr` / `rtdetr-l` | `rtdetr-x`. **`--device`** default is `auto`. **`--weights`** overrides the preset. Save runs on the host: add `-v "$(Get-Location)\runs:/app/runs"`.
 
+### `train.py` arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--data` | *(required)* | Path to dataset YAML (`train` / `val` image dirs, class names). In Docker this is usually `/dataset/data.yaml` when you mount the folder as `/dataset`. |
+| `--model` | `yolo26n` | Preset architecture (see models above). Ignored if `--weights` is set. |
+| `--weights` | *(empty)* | Path or hub name to weights; overrides `--model` (e.g. `/dataset/yolo26n.pt`). |
+| `--epochs` | `100` | Training epochs. |
+| `--imgsz` | `640` | Input image size. |
+| `--batch` | `16` | Batch size. |
+| `--device` | `auto` | `auto` (GPU 0 if CUDA, else CPU), a GPU index (`0`, `1`, …), or `cpu`. |
+| `--project` | `runs/train` | Ultralytics run root directory. |
+| `--name` | *(auto)* | Run name under `--project`; omit for an auto-generated name. |
+| `--resume` | off | Pass this flag to resume the last interrupted run for the same `--project` / `--name`. |
+| `--patience` | `50` | Early stopping: epochs without validation improvement before stopping. |
+| `--workers` | `0` in Docker, else Ultralytics default | DataLoader worker processes. |
+| `--fraction` | `1.0` | Values **below 1.0** train on a **random** subset of that fraction of the full train set (sampled once per run). `1.0` uses all train images. Unlike Ultralytics’ built-in `fraction`, this does **not** take the alphabetically first files. |
+| `--subset-seed` | random | With `--fraction` below 1.0: **omit** for a **new random seed each run** (the seed is printed in the log). Pass an integer (e.g. `--subset-seed 42`) to reuse the **same** subset across runs. |
+
+**Examples**
+
+Full training (same as the `docker run` line above):
+
+```powershell
+python3 train.py --data /dataset/data.yaml --model yolo26n --epochs 100 --batch 16
+```
+
+Quick experiment on ~25% of train images (random subset; seed printed in the log):
+
+```powershell
+python3 train.py --data /dataset/data.yaml --model yolo26n --epochs 20 --batch 16 --fraction 0.25
+```
+
+Reproduce the same 25% subset as before (replace `1234567890` with the seed from the log):
+
+```powershell
+python3 train.py --data /dataset/data.yaml --model yolo26n --epochs 100 --batch 16 --fraction 0.25 --subset-seed 1234567890
+```
+
+Local (no Docker), from the repo root, dataset on disk:
+
+```powershell
+python train.py --data Datasets/PAD-UFES-20-yolo/data.yaml --model yolo26n --epochs 100 --batch 16 --device 0
+```
+
 ## Convert dataset
 
 PAD-UFES, COCO, VOC, YOLO TXT, or LabelMe → YOLO layout + `data.yaml`:
