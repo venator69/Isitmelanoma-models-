@@ -18,12 +18,15 @@ import random
 import secrets
 import tempfile
 from contextlib import chdir
+from copy import deepcopy
 from pathlib import Path
 
 import torch
 import yaml
 from ultralytics import YOLO
-from ultralytics.data.utils import IMG_FORMATS
+from ultralytics.data.build import build_yolo_dataset
+from ultralytics.data.utils import IMG_FORMATS, img2label_paths
+from ultralytics.nn.tasks import unwrap_model
 
 # Preset -> Ultralytics hub / local weight filename (downloaded on first use).
 MODEL_PRESETS: dict[str, str] = {
@@ -99,9 +102,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="SEED",
         help=(
-            "RNG seed for picking images when --fraction < 1.0. "
-            "Omit for a random seed each run (printed to the console). "
-            "Pass an integer to reproduce the same subset."
+            "Base RNG seed when --fraction < 1.0: each epoch uses a new random subset derived from this base "
+            "(omit: random base each run, printed once). Pass an int for reproducible per-epoch sampling across runs."
         ),
     )
     return p.parse_args()
@@ -148,6 +150,25 @@ def _resolve_train_image_paths(train_spec: str | Path, dataset_root: Path) -> li
     raise SystemExit(f"Unsupported train path (need dir or .txt): {p}")
 
 
+def _paths_with_label_txt(image_paths: list[str]) -> list[str]:
+    """Keep only images whose YOLO sibling label .txt exists (same rule as Ultralytics)."""
+    out: list[str] = []
+    for img, lab in zip(image_paths, img2label_paths(image_paths)):
+        if Path(lab).is_file():
+            out.append(img)
+    return out
+
+
+def _write_path_list_txt(paths: list[str]) -> Path:
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix="_train_paths.txt", delete=False, encoding="utf-8", newline="\n"
+    )
+    with tmp as f:
+        for line in paths:
+            f.write(line + "\n")
+    return Path(tmp.name)
+
+
 def _write_random_train_subset(
     train_paths: list[str], fraction: float, seed: int
 ) -> tuple[Path, int]:
@@ -165,6 +186,81 @@ def _write_random_train_subset(
         for line in chosen:
             f.write(line + "\n")
     return Path(tmp.name), k
+
+
+def _epoch_subset_rng(base_seed: int, epoch: int) -> random.Random:
+    """Deterministic per-epoch RNG from a single run-level base seed."""
+    # Mix epoch into seed (stable across platforms for a given base + epoch).
+    mixed = (base_seed ^ (epoch * 1_000_003) ^ (epoch * epoch * 7)) % (2**31)
+    return random.Random(mixed)
+
+
+def _apply_train_subset_to_dataset(
+    trainer: object, chosen_paths: list[str], label_map: dict[str, dict]
+) -> None:
+    """Replace train dataset image list and labels in-place (same length k each epoch)."""
+    ds = trainer.train_loader.dataset
+    labels = [deepcopy(label_map[p]) for p in chosen_paths]
+    ds.im_files = list(chosen_paths)
+    ds.labels = labels
+    ds.ni = len(labels)
+    ds.npy_files = [Path(f).with_suffix(".npy") for f in chosen_paths]
+    ds.ims = [None] * ds.ni
+    ds.im_hw0 = [None] * ds.ni
+    ds.im_hw = [None] * ds.ni
+    ds.buffer = []
+    if ds.augment:
+        ds.max_buffer_length = min((ds.ni, ds.batch_size * 8, 1000))
+    if getattr(ds, "rect", False) and ds.batch_size:
+        ds.set_rectangle()
+
+
+def install_per_epoch_subset_callbacks(
+    model: YOLO,
+    *,
+    full_train_txt: Path,
+    subset_k: int,
+    base_seed: int,
+) -> None:
+    """Resample train subset at each epoch start (single training run, no model re-init)."""
+
+    def on_train_start(trainer: object) -> None:
+        gs = max(int(unwrap_model(trainer.model).stride.max()), 32)
+        full_ds = build_yolo_dataset(
+            trainer.args,
+            str(full_train_txt.resolve()),
+            trainer.batch_size,
+            trainer.data,
+            mode="train",
+            stride=gs,
+        )
+        label_map = {lb["im_file"]: deepcopy(lb) for lb in full_ds.labels}
+        pool = list(label_map.keys())
+        del full_ds
+        if not pool:
+            raise RuntimeError("Per-epoch subset: no valid labeled images in train pool.")
+        if len(pool) < subset_k:
+            raise RuntimeError(
+                f"After scanning labels, only {len(pool)} usable train images remain (need k={subset_k}). "
+                "Fix corrupt images/labels or lower --fraction."
+            )
+        trainer._subset_pool = pool  # type: ignore[attr-defined]
+        trainer._subset_k = subset_k  # type: ignore[attr-defined]
+        trainer._subset_label_map = label_map  # type: ignore[attr-defined]
+        trainer._subset_base_seed = base_seed  # type: ignore[attr-defined]
+
+    def on_train_epoch_start(trainer: object) -> None:
+        pool: list[str] = trainer._subset_pool  # type: ignore[attr-defined]
+        k: int = trainer._subset_k  # type: ignore[attr-defined]
+        label_map: dict[str, dict] = trainer._subset_label_map  # type: ignore[attr-defined]
+        base_seed: int = trainer._subset_base_seed  # type: ignore[attr-defined]
+        epoch = int(trainer.epoch)
+        rng = _epoch_subset_rng(base_seed, epoch)
+        chosen = rng.sample(pool, k)
+        _apply_train_subset_to_dataset(trainer, chosen, label_map)
+
+    model.add_callback("on_train_start", on_train_start)
+    model.add_callback("on_train_epoch_start", on_train_epoch_start)
 
 
 def main() -> None:
@@ -194,13 +290,21 @@ def main() -> None:
     }
     if args.name:
         train_kw["name"] = args.name
-    if args.workers is not None:
+    frac = float(args.fraction)
+    if frac < 1.0:
+        # Workers fork a snapshot of the dataset; in-place resampling would not reach worker processes.
+        if args.workers is not None and args.workers != 0:
+            print(
+                "warning: --fraction uses per-epoch subset resampling; forcing workers=0 "
+                f"(ignoring --workers {args.workers})."
+            )
+        train_kw["workers"] = 0
+    elif args.workers is not None:
         train_kw["workers"] = args.workers
     elif Path("/.dockerenv").is_file():
         # Default Docker shm is small; multiprocessing workers often OOM or bus-error.
         train_kw["workers"] = 0
 
-    frac = float(args.fraction)
     if not (0.0 < frac <= 1.0):
         raise SystemExit("--fraction must be in (0, 1], e.g. 0.25")
 
@@ -210,6 +314,7 @@ def main() -> None:
     root = yaml_path.parent.resolve()
     tmp_path: Path | None = None
     subset_txt: Path | None = None
+    full_train_txt: Path | None = None
     try:
         cfg = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
         if not isinstance(cfg, dict):
@@ -217,26 +322,40 @@ def main() -> None:
         cfg["path"] = str(root)
         train_key = cfg.get("train")
         if frac < 1.0:
+            if args.resume:
+                raise SystemExit(
+                    "--resume is not supported together with --fraction "
+                    "(per-epoch subset + checkpoint). Train without --resume or use fraction=1.0."
+                )
             if not train_key:
                 raise SystemExit("data.yaml must define `train` when using --fraction < 1.0")
-            all_train = _resolve_train_image_paths(train_key, root)
+            all_train = _paths_with_label_txt(_resolve_train_image_paths(train_key, root))
+            if not all_train:
+                raise SystemExit("No training images with existing label .txt files found.")
             subset_seed = (
                 int(args.subset_seed)
                 if args.subset_seed is not None
                 else secrets.randbelow(2**31)
             )
-            subset_txt, subset_k = _write_random_train_subset(
-                all_train, fraction=frac, seed=subset_seed
-            )
+            subset_k = min(len(all_train), max(1, round(len(all_train) * frac)))
+            full_train_txt = _write_path_list_txt(all_train)
+            # Initial list for Ultralytics: fixed size k so dataloader length / LR warmup stay consistent.
+            subset_txt, _ = _write_random_train_subset(all_train, fraction=frac, seed=subset_seed)
             cfg["train"] = str(subset_txt.resolve())
             seed_note = (
                 ""
                 if args.subset_seed is not None
-                else " (random each run; use --subset-seed to reproduce)"
+                else " (random base each run; use --subset-seed to reproduce)"
             )
             print(
-                f"train subset: {len(all_train)} -> {subset_k} images "
-                f"(fraction={frac}, subset_seed={subset_seed}){seed_note}"
+                f"train subset per epoch: pool={len(all_train)} images, k={subset_k} per epoch "
+                f"(fraction={frac}, subset_seed_base={subset_seed}){seed_note}"
+            )
+            install_per_epoch_subset_callbacks(
+                model,
+                full_train_txt=full_train_txt,
+                subset_k=subset_k,
+                base_seed=subset_seed,
             )
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".yaml", delete=False, encoding="utf-8"
@@ -256,6 +375,8 @@ def main() -> None:
             tmp_path.unlink(missing_ok=True)
         if subset_txt is not None:
             subset_txt.unlink(missing_ok=True)
+        if full_train_txt is not None:
+            full_train_txt.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

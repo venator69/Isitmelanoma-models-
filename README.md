@@ -57,11 +57,11 @@ docker run --rm --shm-size=2g --gpus all -v "$(Get-Location)\Datasets\PAD-UFES-2
 | `--device` | `auto` | `auto` (GPU 0 if CUDA, else CPU), a GPU index (`0`, `1`, …), or `cpu`. |
 | `--project` | `runs/train` | Ultralytics run root directory. |
 | `--name` | *(auto)* | Run name under `--project`; omit for an auto-generated name. |
-| `--resume` | off | Pass this flag to resume the last interrupted run for the same `--project` / `--name`. |
+| `--resume` | off | Pass this flag to resume the last interrupted run for the same `--project` / `--name`. **Not supported with `--fraction` below 1.0** (use `fraction=1.0` or start a new run). |
 | `--patience` | `50` | Early stopping: epochs without validation improvement before stopping. |
-| `--workers` | `0` in Docker, else Ultralytics default | DataLoader worker processes. |
-| `--fraction` | `1.0` | Values **below 1.0** train on a **random** subset of that fraction of the full train set (sampled once per run). `1.0` uses all train images. Unlike Ultralytics’ built-in `fraction`, this does **not** take the alphabetically first files. |
-| `--subset-seed` | random | With `--fraction` below 1.0: **omit** for a **new random seed each run** (the seed is printed in the log). Pass an integer (e.g. `--subset-seed 42`) to reuse the **same** subset across runs. |
+| `--workers` | `0` in Docker, else Ultralytics default | DataLoader worker processes. With **`--fraction` below 1.0**, `train.py` **always sets workers to 0** (per-epoch subset updates the dataset in the main process; worker processes would see a stale copy). |
+| `--fraction` | `1.0` | Values **below 1.0**: each **epoch** trains on a **new random** subset of size `round(pool × fraction)` (uniform, no replacement), **without** restarting the model. Pool = train images that have a sibling label `.txt`. `1.0` uses the full train set. |
+| `--subset-seed` | random | Base seed when `--fraction` is below 1.0: combined with the epoch index so **each epoch’s subset is reproducible** if you rerun with the same base seed. Omit: random base once per run (printed). |
 
 **Examples**
 
@@ -71,13 +71,13 @@ Full training (same as the `docker run` line above):
 python3 train.py --data /dataset/data.yaml --model yolo26n --epochs 100 --batch 16
 ```
 
-Quick experiment on ~25% of train images (random subset; seed printed in the log):
+Quick run with ~25% of train images **resampled every epoch** (same training job; `workers` forced to `0`):
 
 ```powershell
 python3 train.py --data /dataset/data.yaml --model yolo26n --epochs 20 --batch 16 --fraction 0.25
 ```
 
-Reproduce the same 25% subset as before (replace `1234567890` with the seed from the log):
+Reproducible per-epoch sampling for the whole run (same base seed as before):
 
 ```powershell
 python3 train.py --data /dataset/data.yaml --model yolo26n --epochs 100 --batch 16 --fraction 0.25 --subset-seed 1234567890
