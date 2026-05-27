@@ -2,6 +2,9 @@
 """
 Download the Kaggle skin-cancer dataset (default: mahdavi1202/skin-cancer) into a local folder.
 
+If the target folder already contains metadata.csv (root or subfolder) and at least one image,
+the script exits immediately and does not call Kaggle again (unless --force).
+
 Used inside Docker so `Datasets/` is not baked into git. Requires Kaggle API credentials:
 
   - Mount `~/.kaggle/kaggle.json` read-only, or
@@ -23,15 +26,18 @@ DEFAULT_SLUG = "mahdavi1202/skin-cancer"
 DEFAULT_TARGET = "/app/Datasets/PAD-UFES-20"
 
 
+_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".webp"})
+
+
 def _has_dataset_marker(root: Path) -> bool:
+    """True if folder already looks like a downloaded dataset — skip Kaggle entirely."""
     if not root.is_dir():
         return False
-    meta = root / "metadata.csv"
-    if not meta.is_file():
+    has_meta = (root / "metadata.csv").is_file() or next(root.rglob("metadata.csv"), None) is not None
+    if not has_meta:
         return False
-    # Heuristic: at least one image somewhere under root
-    for pat in ("*.png", "*.jpg", "*.jpeg", "*.bmp"):
-        if any(root.rglob(pat)):
+    for p in root.rglob("*"):
+        if p.is_file() and p.suffix.lower() in _IMAGE_SUFFIXES:
             return True
     return False
 
@@ -81,7 +87,8 @@ def main() -> int:
     target: Path = args.target.resolve()
 
     if not args.force and _has_dataset_marker(target):
-        print(f"Dataset already present (metadata + images): {target}", flush=True)
+        # Sudah ada: tidak memanggil Kaggle lagi (hemat waktu & kuota).
+        print(f"Skip download — dataset already present: {target}", flush=True)
         return 0
 
     if target.exists() and not _has_dataset_marker(target) and not args.force:

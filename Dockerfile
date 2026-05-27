@@ -42,6 +42,12 @@ COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir -r requirements.txt
 
+# OpenCV (via ultralytics) needs these at import time; base PyTorch image omits them.
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxcb1 libgl1 libglib2.0-0 libsm6 libxext6 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . /app
 
 # Cache yolo26n/s/m + RT-DETR weights in the image (requires network at build time).

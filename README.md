@@ -4,27 +4,62 @@ Docker image with **PyTorch**, **Ultralytics** (YOLO26, RT-DETR), and **Transfor
 
 ## Build
 
+Run all build commands from the project folder:
+
 ```powershell
 cd "c:\Users\denni\Desktop\isitmelanoma-docker"
 docker build -t yolo26-detr:cuda .
 ```
 
-- **CPU-only / smaller image:**  
-  `docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.5.1-runtime -t yolo26-detr:cpu .`
-- **Skip downloading weights during build:**  
-  `docker build --build-arg SKIP_PREFETCH=1 -t yolo26-detr:cuda .`
-- **Other CUDA PyTorch tag:**  
-  `docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime -t yolo26-detr:cuda .`
+This builds the default CUDA-capable image and prefetches:
+
+- `yolo26n.pt`
+- `yolo26s.pt`
+- `yolo26m.pt`
+- `rtdetr-l.pt`
+- `rtdetr-x.pt`
+
+Build faster without downloading weights:
+
+```powershell
+docker build --build-arg SKIP_PREFETCH=1 -t yolo26-detr:cuda .
+```
+
+CPU-only / smaller image:
+
+```powershell
+docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.5.1-runtime -t yolo26-detr:cpu .
+```
+
+Use another CUDA PyTorch base:
+
+```powershell
+docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime -t yolo26-detr:cuda .
+```
+
+`.` at the end means “use this folder as the Docker build context.”
 
 ## Run
+
+Test the image:
 
 ```powershell
 docker run --rm yolo26-detr:cuda
 ```
 
-With GPU: `docker run --rm --gpus all yolo26-detr:cuda`
+With GPU:
 
-Shell: `docker run --rm -it yolo26-detr:cuda bash` (add `--gpus all` if you use CUDA inside).
+```powershell
+docker run --rm --gpus all yolo26-detr:cuda
+```
+
+Open a shell:
+
+```powershell
+docker run --rm -it yolo26-detr:cuda bash
+```
+
+Add `--gpus all` to shell/training/inference commands when you want CUDA.
 
 ## Train
 
@@ -44,7 +79,7 @@ Data lives under `Datasets/` (gitignored). Download [mahdavi1202/skin-cancer](ht
 docker run --rm -v "$env:USERPROFILE\.kaggle\kaggle.json:/root/.kaggle/kaggle.json:ro" -v "pad_ufes20_data:/app/Datasets" yolo26-detr:cuda python3 scripts/download_kaggle_dataset.py
 ```
 
-`--force` replaces an existing folder. Env: `KAGGLE_DATASET`, `PAD_UFES20_ROOT`, or `KAGGLE_USERNAME` + `KAGGLE_KEY`.
+`--force` replaces an existing folder. If `metadata.csv` + images are already there, the script **skips** download (no Kaggle call). Env: `KAGGLE_DATASET`, `PAD_UFES20_ROOT`, or `KAGGLE_USERNAME` + `KAGGLE_KEY`.
 
 ## Inference example
 
