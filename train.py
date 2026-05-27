@@ -14,9 +14,12 @@ Your `data.yaml` should point `train` / `val` at the image folders (Ultralytics 
 from __future__ import annotations
 
 import argparse
+import tempfile
+from contextlib import chdir
 from pathlib import Path
 
 import torch
+import yaml
 from ultralytics import YOLO
 
 # Preset -> Ultralytics hub / local weight filename (downloaded on first use).
@@ -69,17 +72,25 @@ def parse_args() -> argparse.Namespace:
         default=50,
         help="Early stopping patience (epochs without val improvement).",
     )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help="DataLoader workers (default: Ultralytics default). Use 0 in Docker if you hit shm/bus errors.",
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     data_path = Path(args.data)
-    if not data_path.is_file():
-        raise SystemExit(f"Dataset YAML not found: {data_path.resolve()}")
+    yaml_path = data_path.resolve()
+    if not yaml_path.is_file():
+        raise SystemExit(f"Dataset YAML not found: {yaml_path}")
 
     weights = args.weights.strip() or MODEL_PRESETS[args.model]
-    print("weights:", weights, "| data:", data_path)
+    print("weights:", weights, "| data:", yaml_path)
 
     dev = args.device
     if dev == "auto":
@@ -88,7 +99,6 @@ def main() -> None:
 
     model = YOLO(weights)
     train_kw: dict = {
-        "data": str(data_path),
         "epochs": args.epochs,
         "imgsz": args.imgsz,
         "batch": args.batch,
@@ -99,8 +109,38 @@ def main() -> None:
     }
     if args.name:
         train_kw["name"] = args.name
+    if args.workers is not None:
+        train_kw["workers"] = args.workers
+    elif Path("/.dockerenv").is_file():
+        # Default Docker shm is small; multiprocessing workers often OOM or bus-error.
+        train_kw["workers"] = 0
 
-    model.train(**train_kw)
+    # Ultralytics 8.4.x expects `data` as a path string, not a dict. `path: .` in the user's
+    # YAML is resolved against cwd (/app in Docker). Write a short-lived YAML with an absolute
+    # `path` and pass that file to `model.train`.
+    root = yaml_path.parent.resolve()
+    tmp_path: Path | None = None
+    try:
+        cfg = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(cfg, dict):
+            raise ValueError("data.yaml must be a YAML mapping")
+        cfg["path"] = str(root)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+        ) as tmp:
+            yaml.safe_dump(cfg, tmp, sort_keys=False, default_flow_style=False)
+            tmp_path = Path(tmp.name)
+    except Exception as exc:
+        print("warning: could not build patched dataset YAML:", exc)
+
+    try:
+        with chdir(root):
+            train_kw["data"] = str(tmp_path.resolve()) if tmp_path else yaml_path.name
+            print("dataset root:", root, "| data:", train_kw["data"])
+            model.train(**train_kw)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

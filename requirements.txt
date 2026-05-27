@@ -1,6 +1,7 @@
 # Torch + CUDA come from the PyTorch Docker base image; do not pip-install CPU torch here.
 
 ultralytics>=8.3.0
+PyYAML>=6.0
 transformers>=4.44.0
 accelerate>=0.33.0
 safetensors>=0.4.0
