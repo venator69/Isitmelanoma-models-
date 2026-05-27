@@ -26,7 +26,7 @@ import yaml
 from ultralytics import YOLO
 from ultralytics.data.build import build_yolo_dataset
 from ultralytics.data.utils import IMG_FORMATS, img2label_paths
-from ultralytics.nn.tasks import unwrap_model
+from ultralytics.utils.torch_utils import unwrap_model
 
 # Preset -> Ultralytics hub / local weight filename (downloaded on first use).
 MODEL_PRESETS: dict[str, str] = {
