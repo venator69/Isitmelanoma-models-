@@ -7,7 +7,7 @@ PyTorch image with **Ultralytics** (YOLO26, RT-DETR) and **Transformers** (DETR)
 From this repo folder:
 
 ```powershell
-cd "c:\Users\denni\Desktop\isitmelanoma-docker"
+cd "isitmelanoma-docker"
 docker build -t yolo26-detr:cuda .
 ```
 
